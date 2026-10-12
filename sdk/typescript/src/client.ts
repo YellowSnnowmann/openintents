@@ -2,10 +2,17 @@ import { OpenIntentsError, WaitTimeoutError, type ApiErrorType } from "./errors.
 import {
   FINAL_STATUSES,
   type Balance,
+  type BalanceParams,
   type CreateIntentParams,
+  type CreateTopupParams,
+  type Customer,
+  type CustomerList,
+  type CustomerParams,
   type Intent,
   type IntentList,
+  type ListCustomersParams,
   type ListIntentsParams,
+  type Topup,
 } from "./types.js";
 import { VERSION } from "./version.js";
 
@@ -25,7 +32,7 @@ export interface ClientOptions {
 }
 
 export interface RequestOptions {
-  /** Sent as Idempotency-Key. `create` and `cancel` generate one if omitted. */
+  /** Sent as Idempotency-Key. Every `create` and `cancel` generates one if omitted. */
   idempotencyKey?: string;
   signal?: AbortSignal;
 }
@@ -70,6 +77,8 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 export class OpenIntents {
   readonly intents: Intents;
   readonly balance: BalanceResource;
+  readonly customers: Customers;
+  readonly topups: Topups;
 
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -89,11 +98,13 @@ export class OpenIntents {
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.intents = new Intents(this);
     this.balance = new BalanceResource(this);
+    this.customers = new Customers(this);
+    this.topups = new Topups(this);
   }
 
   /** @internal Makes a request, retrying 429/5xx/network errors with backoff. */
   async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH",
     path: string,
     opts: { body?: unknown; query?: Record<string, string | number | undefined> } & RequestOptions = {},
   ): Promise<T> {
@@ -227,8 +238,69 @@ class Intents {
 class BalanceResource {
   constructor(private readonly client: OpenIntents) {}
 
-  /** The agent balance intents pay from, and this month's spend. */
-  get(opts: RequestOptions = {}): Promise<Balance> {
-    return this.client.request<Balance>("GET", "/balance", opts);
+  /** The agent balance intents pay from, and this month's spend; a customer's with `{ customer }`. */
+  get(opts: BalanceParams & RequestOptions = {}): Promise<Balance> {
+    const { customer, ...rest } = opts;
+    return this.client.request<Balance>("GET", "/balance", { query: { customer }, ...rest });
+  }
+}
+
+class Customers {
+  constructor(private readonly client: OpenIntents) {}
+
+  /** Someone you buy for, with their own balance and browser profile. */
+  create(params: CustomerParams = {}, opts: RequestOptions = {}): Promise<Customer> {
+    return this.client.request<Customer>("POST", "/customers", {
+      body: params,
+      ...opts,
+      idempotencyKey: opts.idempotencyKey ?? crypto.randomUUID(),
+    });
+  }
+
+  get(id: string, opts: RequestOptions = {}): Promise<Customer> {
+    return this.client.request<Customer>("GET", `/customers/${encodeURIComponent(id)}`, opts);
+  }
+
+  /**
+   * Fields left out stay as they are; an empty string clears `external_id`,
+   * `name` or `email`; `metadata` replaces the whole map.
+   */
+  update(id: string, params: CustomerParams, opts: RequestOptions = {}): Promise<Customer> {
+    return this.client.request<Customer>("PATCH", `/customers/${encodeURIComponent(id)}`, {
+      body: params,
+      ...opts,
+    });
+  }
+
+  /** Newest first. */
+  list(params: ListCustomersParams = {}, opts: RequestOptions = {}): Promise<CustomerList> {
+    return this.client.request<CustomerList>("GET", "/customers", { query: { ...params }, ...opts });
+  }
+
+  /** Iterate every customer matching `params`, following `next_cursor`. */
+  async *listAll(params: Omit<ListCustomersParams, "cursor"> = {}): AsyncGenerator<Customer> {
+    let cursor: string | undefined;
+    do {
+      const page = await this.list({ ...params, cursor });
+      yield* page.data;
+      cursor = page.next_cursor ?? undefined;
+    } while (cursor);
+  }
+}
+
+class Topups {
+  constructor(private readonly client: OpenIntents) {}
+
+  /** A payment link that adds `amount` to a balance once paid. Live keys only. */
+  create(params: CreateTopupParams, opts: RequestOptions = {}): Promise<Topup> {
+    return this.client.request<Topup>("POST", "/topups", {
+      body: params,
+      ...opts,
+      idempotencyKey: opts.idempotencyKey ?? crypto.randomUUID(),
+    });
+  }
+
+  get(id: string, opts: RequestOptions = {}): Promise<Topup> {
+    return this.client.request<Topup>("GET", `/topups/${encodeURIComponent(id)}`, opts);
   }
 }
