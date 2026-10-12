@@ -42,8 +42,10 @@ async with AsyncOpenIntents() as oi:
     intent = await oi.intents.wait(intent["id"])
 ```
 
-Also: `oi.intents.get(id)`, `oi.intents.list(status=..., limit=...)`,
-`oi.intents.list_all()`, `oi.intents.cancel(id)` and `oi.balance.get()`.
+Also: `oi.intents.get(id)`, `oi.intents.list(status=..., customer=..., limit=...)`,
+`oi.intents.list_all()`, `oi.intents.cancel(id)`, `oi.balance.get(customer=...)`,
+`oi.customers.create/get/update/list/list_all` and `oi.topups.create/get`.
+Pass `customer=` to `intents.create` to buy for one of your customers.
 Errors raise `OpenIntentsError` (`status`, `type`, `code`, `param`); 429s,
 5xx and network errors are retried with backoff.
 

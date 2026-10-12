@@ -18,6 +18,10 @@ All three SDKs share one version. Format: [Keep a Changelog](https://keepachange
 - Spec conventions: test and live keys share customers, intents, balances
   and profiles; unknown request fields are refused; new enum values may
   appear.
+- SDKs (TypeScript, Python, Rust): customers (create, retrieve, update,
+  list), top-ups (create, retrieve), a customer's balance, `customer` when
+  creating and listing intents, and the balance's `held` and `customer`.
+  Customer and top-up creates send an `Idempotency-Key`, like intents.
 
 ## [0.1.0]
 

@@ -35,11 +35,13 @@ if (intent.status === "requires_payment") {
 }
 ```
 
-Also: `oi.intents.get(id)`, `oi.intents.list({ status, limit })`,
-`for await (const i of oi.intents.listAll())`, `oi.intents.cancel(id)` and
-`oi.balance.get()`. Errors throw `OpenIntentsError` (`status`, `type`, `code`,
-`param`). `create` and `cancel` send an `Idempotency-Key` automatically; 429s,
-5xx and network errors are retried with backoff.
+Also: `oi.intents.get(id)`, `oi.intents.list({ status, customer, limit })`,
+`for await (const i of oi.intents.listAll())`, `oi.intents.cancel(id)`,
+`oi.balance.get({ customer })`, `oi.customers.create/get/update/list/listAll`
+and `oi.topups.create/get`. Pass `customer` to `intents.create` to buy for one
+of your customers. Errors throw `OpenIntentsError` (`status`, `type`, `code`,
+`param`). Every `create` and `cancel` sends an `Idempotency-Key`
+automatically; 429s, 5xx and network errors are retried with backoff.
 
 ### Webhooks
 

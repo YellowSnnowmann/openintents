@@ -28,8 +28,11 @@ async fn main() -> openintents::Result<()> {
 }
 ```
 
-Also: `get_intent`, `list_intents`, `cancel_intent`, `balance`, and
-`webhooks::verify_webhook` for the `OpenIntents-Signature` header. Unknown
+Also: `get_intent`, `list_intents`, `cancel_intent`, `balance`,
+`balance_for`, `create_customer`, `get_customer`, `update_customer`,
+`list_customers`, `create_topup`, `get_topup`, and
+`webhooks::verify_webhook` for the `OpenIntents-Signature` header.
+`CreateIntent::customer` buys for one of your customers. Unknown
 fields and statuses from newer API versions are tolerated.
 
 A CLI binary is included behind a feature:
