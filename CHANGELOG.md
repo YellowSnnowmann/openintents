@@ -4,6 +4,15 @@ All three SDKs share one version. Format: [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Added
+
+- Spec: browser profiles (`/profiles`), browser sessions (`/sessions`, with
+  commands, screenshots and release, and a `sessionEvent` webhook), and live
+  event streams for intents and sessions. Marked preview: not yet available.
+- Spec: what the API already serves but the spec left out: customers
+  (`/customers`), top-ups (`/topups`), `customer` on intents, and `held` and
+  `customer` on the balance.
+
 ## [0.1.0]
 
 ### Added
