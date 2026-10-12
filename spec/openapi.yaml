@@ -157,8 +157,8 @@ paths:
                 $ref: "#/components/schemas/EventStream"
         "204":
           description: |
-            A stream asked to resume after the last event of something that
-            is over: there is nothing left to send, and SSE clients stop
+            A stream of something that is over, with nothing left to send
+            (asked to resume after its last event, say): SSE clients stop
             reconnecting.
         "4XX":
           $ref: "#/components/responses/Error"
@@ -686,8 +686,8 @@ paths:
                 $ref: "#/components/schemas/EventStream"
         "204":
           description: |
-            A stream asked to resume after the last event of something that
-            is over: there is nothing left to send, and SSE clients stop
+            A stream of something that is over, with nothing left to send
+            (asked to resume after its last event, say): SSE clients stop
             reconnecting.
         "4XX":
           $ref: "#/components/responses/Error"
@@ -1251,10 +1251,10 @@ components:
         to keep the connection open. Reconnect with `Last-Event-ID` to resume
         without repeats; a stream may also close on its own after a while,
         and resuming picks it up. Once the intent or session is over and its
-        last event is sent, the stream closes, and asking to resume after
-        that last event answers `204 No Content`. An account can hold only so
-        many streams open at once: past that, `429` with
-        `code: too_many_streams`.
+        last event is sent, the stream closes. Asking for a stream of
+        something that is over with nothing left to send (resuming after its
+        last event, say) answers `204 No Content`. Too many open streams
+        answer `429` with `code: too_many_streams`; try again shortly.
 
     ProfileStatus:
       type: string
