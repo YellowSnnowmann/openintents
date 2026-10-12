@@ -193,9 +193,10 @@ paths:
       summary: Create a customer
       description: |
         Someone you buy for. A customer has their own balance and their own
-        browser profile; pass `customer` when creating an intent. Not
-        idempotent: to retry safely, set `external_id`, since a second
-        customer with the same one answers `409 conflict`.
+        browser profile; pass `customer` when creating an intent. An
+        `external_id` already in use answers `409 conflict`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         description: Send `{}` for a customer with no details yet.
