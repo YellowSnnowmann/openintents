@@ -6,7 +6,9 @@ use openintents::{Client, CreateIntent, IntentStatus};
 async fn main() -> openintents::Result<()> {
     let oi = Client::from_env()?;
     let created = oi
-        .create_intent(CreateIntent::new("flat white, oat milk, pickup 8:45 at the Blue Bottle on 5th").max_amount(1000))
+        .create_intent(
+            CreateIntent::new("flat white, oat milk, pickup 8:45 at the Blue Bottle on 5th").max_amount(1000),
+        )
         .await?;
     println!("created {}", created.id);
 
