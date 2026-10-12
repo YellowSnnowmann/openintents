@@ -1198,7 +1198,10 @@ components:
         what `data` holds; new types may appear, so skip the ones you don't
         know.
         - `status`: `{status, reason?}`, the intent's or session's new status.
-          A run that moved to a fresh browser shows
+          `reason` says why, when there is a why: a failed intent's error
+          code, the reason of the payment an intent requires, `paid` when a
+          paid intent is queued again, and `payment_expired` when its unpaid
+          link expired. A run that moved to a fresh browser shows
           `{status: queued, reason: browser_lost}`; one sent again to get past
           a shop's check, `{status: queued, reason: retrying}`.
         - `step` (intents): `{action}`, what the agent did: `open`, `look`,
@@ -1246,9 +1249,12 @@ components:
         `data: <Event as JSON>`, then a blank line. Past events come first,
         then new ones as they happen, with a comment line (`:`) now and then
         to keep the connection open. Reconnect with `Last-Event-ID` to resume
-        without repeats. Once the intent or session is over and its last
-        event is sent, the stream closes, and asking to resume after that
-        last event answers `204 No Content`.
+        without repeats; a stream may also close on its own after a while,
+        and resuming picks it up. Once the intent or session is over and its
+        last event is sent, the stream closes, and asking to resume after
+        that last event answers `204 No Content`. An account can hold only so
+        many streams open at once: past that, `429` with
+        `code: too_many_streams`.
 
     ProfileStatus:
       type: string
