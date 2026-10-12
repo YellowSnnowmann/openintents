@@ -57,6 +57,9 @@ pub struct CreateIntent {
     pub require_payment_link: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, String>>,
+    /// A customer of your account to buy for: their balance and browser profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer: Option<String>,
 }
 
 impl CreateIntent {
@@ -91,6 +94,11 @@ impl CreateIntent {
         self.metadata
             .get_or_insert_with(HashMap::new)
             .insert(key.into(), value.into());
+        self
+    }
+
+    pub fn customer(mut self, customer: impl Into<String>) -> Self {
+        self.customer = Some(customer.into());
         self
     }
 }
@@ -139,6 +147,9 @@ pub struct Intent {
     pub id: String,
     pub status: IntentStatus,
     pub intent: String,
+    /// The customer it buys for; `None` for your account's own intents.
+    #[serde(default)]
+    pub customer: Option<String>,
     #[serde(default)]
     pub max_amount: Option<i64>,
     #[serde(default)]
@@ -167,6 +178,9 @@ pub struct Intent {
 pub struct ListIntents {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<IntentStatus>,
+    /// Only intents bought for this customer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,12 +196,152 @@ pub struct IntentList {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Balance {
+    /// What intents can pay from now.
     pub available: i64,
+    /// Reserved for intents at their payment step.
+    #[serde(default)]
+    pub held: Option<i64>,
     pub currency: String,
+    /// The customer whose balance this is; `None` for your account's.
+    #[serde(default)]
+    pub customer: Option<String>,
     #[serde(default)]
     pub monthly_limit: Option<i64>,
     #[serde(default)]
     pub spent_this_month: Option<i64>,
+}
+
+/// Someone you buy for, with their own balance and browser profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Customer {
+    pub id: String,
+    /// Your own ID for them, unique in your account.
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+    pub created_at: String,
+}
+
+/// Fields for creating or updating a customer. On update, fields left out
+/// stay as they are, an empty string clears `external_id`, `name` or
+/// `email`, and `metadata` replaces the whole map.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CustomerParams {
+    /// Unique in your account; one already in use is a 409 conflict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+impl CustomerParams {
+    pub fn external_id(mut self, id: impl Into<String>) -> Self {
+        self.external_id = Some(id.into());
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn email(mut self, email: impl Into<String>) -> Self {
+        self.email = Some(email.into());
+        self
+    }
+
+    pub fn metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata
+            .get_or_insert_with(HashMap::new)
+            .insert(key.into(), value.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ListCustomers {
+    /// Only the customer with this `external_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomerList {
+    pub data: Vec<Customer>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TopupStatus {
+    /// Waiting to be paid until `expires_at`.
+    Open,
+    Paid,
+    /// Not paid in time (a payment begun in time can still turn it `Paid`).
+    Expired,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Parameters for `POST /topups`. Build with [`CreateTopup::new`].
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateTopup {
+    /// In cents: 50 to 1000000.
+    pub amount: i64,
+    /// Only `usd` for now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Top up this customer's balance instead of your account's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer: Option<String>,
+}
+
+impl CreateTopup {
+    pub fn new(amount: i64) -> Self {
+        Self {
+            amount,
+            ..Default::default()
+        }
+    }
+
+    pub fn currency(mut self, currency: impl Into<String>) -> Self {
+        self.currency = Some(currency.into());
+        self
+    }
+
+    pub fn customer(mut self, customer: impl Into<String>) -> Self {
+        self.customer = Some(customer.into());
+        self
+    }
+}
+
+/// A payment link that adds `amount` to a balance once paid.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Topup {
+    pub id: String,
+    pub amount: i64,
+    pub currency: String,
+    #[serde(default)]
+    pub customer: Option<String>,
+    pub status: TopupStatus,
+    /// Where the payer pays.
+    pub url: String,
+    pub expires_at: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

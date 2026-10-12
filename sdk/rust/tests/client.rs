@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use openintents::{Client, CreateIntent, Error, IntentStatus, WaitOptions};
+use openintents::{
+    Client, CreateIntent, CreateTopup, CustomerParams, Error, IntentStatus, ListCustomers, ListIntents, TopupStatus,
+    WaitOptions,
+};
 use serde_json::json;
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -165,4 +168,127 @@ async fn gets_the_balance() {
         .mount(&server)
         .await;
     assert_eq!(client(&server).balance().await.unwrap().available, 24450);
+}
+
+#[tokio::test]
+async fn buys_for_a_customer_and_reads_their_balance() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/balance"))
+        .and(query_param("customer", "cus_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({ "object": "balance", "available": 0, "held": 450, "currency": "usd", "customer": "cus_1" }),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/intents"))
+        .and(body_json(json!({ "intent": "flat white", "customer": "cus_1" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(intent("queued")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/intents"))
+        .and(query_param("customer", "cus_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "object": "list", "data": [] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let oi = client(&server);
+    let balance = oi.balance_for("cus_1").await.unwrap();
+    assert_eq!((balance.held, balance.customer.as_deref()), (Some(450), Some("cus_1")));
+    oi.create_intent(CreateIntent::new("flat white").customer("cus_1"))
+        .await
+        .unwrap();
+    let only = ListIntents {
+        customer: Some("cus_1".into()),
+        ..Default::default()
+    };
+    assert!(oi.list_intents(&only).await.unwrap().data.is_empty());
+}
+
+#[tokio::test]
+async fn creates_updates_and_lists_customers() {
+    let server = MockServer::start().await;
+    let customer = json!({ "id": "cus_1", "object": "customer", "external_id": "u-42", "name": null,
+                           "email": null, "metadata": {}, "created_at": "x" });
+    Mock::given(method("POST"))
+        .and(path("/customers"))
+        .and(header_exists("idempotency-key"))
+        .and(body_json(json!({ "external_id": "u-42" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(customer.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/customers/cus_1"))
+        .and(body_json(json!({ "name": "Ada", "email": "" })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "id": "cus_1", "object": "customer",
+            "name": "Ada", "created_at": "x" })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/customers"))
+        .and(query_param("external_id", "u-42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "object": "list", "data": [customer.clone()] })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/customers/cus_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(customer))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let oi = client(&server);
+    let made = oi
+        .create_customer(CustomerParams::default().external_id("u-42"))
+        .await
+        .unwrap();
+    assert_eq!(made.external_id.as_deref(), Some("u-42"));
+    let renamed = oi
+        .update_customer("cus_1", CustomerParams::default().name("Ada").email(""))
+        .await
+        .unwrap();
+    assert_eq!(renamed.name.as_deref(), Some("Ada"));
+    let only = ListCustomers {
+        external_id: Some("u-42".into()),
+        ..Default::default()
+    };
+    assert_eq!(oi.list_customers(&only).await.unwrap().data.len(), 1);
+    assert_eq!(oi.get_customer("cus_1").await.unwrap().id, "cus_1");
+}
+
+#[tokio::test]
+async fn creates_and_retrieves_a_topup() {
+    let server = MockServer::start().await;
+    let topup = |status: &str| {
+        json!({ "id": "pay_1", "object": "topup", "amount": 5000, "currency": "usd", "customer": "cus_1",
+                "status": status, "url": "https://openintents.io/api/pay/pay_1", "expires_at": "x",
+                "created_at": "x" })
+    };
+    Mock::given(method("POST"))
+        .and(path("/topups"))
+        .and(header_exists("idempotency-key"))
+        .and(body_json(json!({ "amount": 5000, "customer": "cus_1" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(topup("open")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/topups/pay_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(topup("refunded")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let oi = client(&server);
+    let made = oi.create_topup(CreateTopup::new(5000).customer("cus_1")).await.unwrap();
+    assert_eq!(made.status, TopupStatus::Open);
+    // A status this SDK does not know yet still parses.
+    assert_eq!(oi.get_topup("pay_1").await.unwrap().status, TopupStatus::Unknown);
 }
