@@ -3,7 +3,7 @@
 use openintents::{Client, CreateIntent, IntentStatus};
 
 #[tokio::main]
-async fn main() -> openintents::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let oi = Client::from_env()?;
     let created = oi
         .create_intent(

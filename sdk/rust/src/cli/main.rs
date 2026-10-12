@@ -77,6 +77,9 @@ fn show(intent: &Intent, json: bool) {
     }
 }
 
+// `openintents::Error` keeps the API's error fields by value; returned once
+// per process, it is not worth boxing.
+#[allow(clippy::result_large_err)]
 async fn run(cli: Cli) -> openintents::Result<u8> {
     let oi = Client::from_env()?;
     let json = cli.json;
