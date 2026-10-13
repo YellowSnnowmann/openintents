@@ -112,6 +112,79 @@ def test_balance():
     assert oi.balance.get()["available"] == 24450
 
 
+def test_customer_balance_and_intents_for_a_customer():
+    calls = []
+    oi = client(
+        (200, {"object": "balance", "available": 0, "held": 450, "currency": "usd", "customer": "cus_1"}),
+        (201, intent(customer="cus_1")),
+        (200, {"object": "list", "data": [], "next_cursor": None}),
+        calls=calls,
+    )
+    assert oi.balance.get(customer="cus_1")["held"] == 450
+    assert calls[0].url.params["customer"] == "cus_1"
+    assert oi.intents.create("flat white", customer="cus_1")["customer"] == "cus_1"
+    assert json.loads(calls[1].content) == {"intent": "flat white", "customer": "cus_1"}
+    oi.intents.list(customer="cus_1")
+    assert calls[2].url.params["customer"] == "cus_1"
+
+
+def test_customers_create_update_list_get():
+    customer = {"id": "cus_1", "object": "customer", "external_id": "u-42", "metadata": {}, "created_at": "x"}
+    calls = []
+    oi = client(
+        (201, customer),
+        (200, {**customer, "name": "Ada"}),
+        (200, {"object": "list", "data": [customer], "next_cursor": None}),
+        (200, customer),
+        calls=calls,
+    )
+    oi.customers.create(external_id="u-42")
+    assert calls[0].method == "POST" and str(calls[0].url) == "https://api.test/v1/customers"
+    assert len(calls[0].headers["idempotency-key"]) == 36
+    assert json.loads(calls[0].content) == {"external_id": "u-42"}
+    assert oi.customers.update("cus_1", name="Ada", email="")["name"] == "Ada"
+    assert calls[1].method == "PATCH" and calls[1].url.path == "/v1/customers/cus_1"
+    assert json.loads(calls[1].content) == {"name": "Ada", "email": ""}
+    assert [c["id"] for c in oi.customers.list_all(external_id="u-42")] == ["cus_1"]
+    assert calls[2].url.params["external_id"] == "u-42"
+    assert oi.customers.get("cus_1")["external_id"] == "u-42"
+
+
+def test_topups_create_and_get():
+    topup = {
+        "id": "pay_1",
+        "object": "topup",
+        "amount": 5000,
+        "currency": "usd",
+        "customer": None,
+        "status": "open",
+        "url": "https://openintents.io/api/pay/pay_1",
+        "expires_at": "x",
+        "created_at": "x",
+    }
+    calls = []
+    oi = client((201, topup), (200, {**topup, "status": "paid"}), calls=calls)
+    assert oi.topups.create(5000)["status"] == "open"
+    assert json.loads(calls[0].content) == {"amount": 5000}
+    assert calls[0].headers["idempotency-key"]
+    assert oi.topups.get("pay_1")["status"] == "paid"
+    assert calls[1].url.path == "/v1/topups/pay_1"
+
+
+async def test_async_customers_and_topups():
+    calls = []
+    handler = transport(
+        (201, {"id": "cus_1", "object": "customer"}),
+        (201, {"id": "pay_1", "object": "topup", "status": "open"}),
+        calls=calls,
+    )
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    async with AsyncOpenIntents("oi_test_x", base_url="https://api.test/v1", http_client=http) as oi:
+        assert (await oi.customers.create(name="Ada"))["id"] == "cus_1"
+        assert (await oi.topups.create(5000, customer="cus_1"))["status"] == "open"
+    assert json.loads(calls[1].content) == {"amount": 5000, "customer": "cus_1"}
+
+
 async def test_async_client():
     http = httpx.AsyncClient(transport=httpx.MockTransport(transport((200, intent(status="completed")))))
     async with AsyncOpenIntents("oi_test_x", base_url="https://api.test/v1", http_client=http) as oi:

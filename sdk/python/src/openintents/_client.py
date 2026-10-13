@@ -14,7 +14,16 @@ import httpx
 
 from ._version import __version__
 from .errors import OpenIntentsError, WaitTimeoutError
-from .types import FINAL_STATUSES, Balance, Intent, IntentList, IntentStatus
+from .types import (
+    FINAL_STATUSES,
+    Balance,
+    Customer,
+    CustomerList,
+    Intent,
+    IntentList,
+    IntentStatus,
+    Topup,
+)
 
 DEFAULT_BASE_URL = "https://api.openintents.io/v1"
 
@@ -73,6 +82,7 @@ def _create_body(
     context: Mapping[str, Any] | None,
     require_payment_link: bool | None,
     metadata: Mapping[str, str] | None,
+    customer: str | None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"intent": intent}
     for k, v in (
@@ -81,10 +91,16 @@ def _create_body(
         ("context", dict(context) if context is not None else None),
         ("require_payment_link", require_payment_link),
         ("metadata", dict(metadata) if metadata is not None else None),
+        ("customer", customer),
     ):
         if v is not None:
             body[k] = v
     return body
+
+
+def _fields(**fields: Any) -> dict[str, Any]:
+    """The fields given: None means left out (an empty string clears one)."""
+    return {k: (dict(v) if isinstance(v, Mapping) else v) for k, v in fields.items() if v is not None}
 
 
 def _settled(intent: Intent, return_on_payment: bool) -> bool:
@@ -114,6 +130,8 @@ class OpenIntents:
         self._http = http_client or httpx.Client(timeout=timeout)
         self.intents = Intents(self)
         self.balance = BalanceResource(self)
+        self.customers = Customers(self)
+        self.topups = Topups(self)
 
     def close(self) -> None:
         self._http.close()
@@ -169,10 +187,11 @@ class Intents:
         context: Mapping[str, Any] | None = None,
         require_payment_link: bool | None = None,
         metadata: Mapping[str, str] | None = None,
+        customer: str | None = None,
         idempotency_key: str | None = None,
     ) -> Intent:
         """Start an intent. Returns immediately, usually with status "queued"."""
-        body = _create_body(intent, max_amount, currency, context, require_payment_link, metadata)
+        body = _create_body(intent, max_amount, currency, context, require_payment_link, metadata, customer)
         return self._c._request(
             "POST", "/intents", json=body, idempotency_key=idempotency_key or str(uuid.uuid4())
         )
@@ -181,17 +200,26 @@ class Intents:
         return self._c._request("GET", f"/intents/{intent_id}")
 
     def list(
-        self, *, status: IntentStatus | None = None, limit: int | None = None, cursor: str | None = None
+        self,
+        *,
+        status: IntentStatus | None = None,
+        customer: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> IntentList:
         return self._c._request(
-            "GET", "/intents", params={"status": status, "limit": limit, "cursor": cursor}
+            "GET",
+            "/intents",
+            params={"status": status, "customer": customer, "limit": limit, "cursor": cursor},
         )
 
-    def list_all(self, *, status: IntentStatus | None = None, limit: int | None = None) -> Iterator[Intent]:
+    def list_all(
+        self, *, status: IntentStatus | None = None, customer: str | None = None, limit: int | None = None
+    ) -> Iterator[Intent]:
         """Iterate every intent matching the filters, following next_cursor."""
         cursor: str | None = None
         while True:
-            page = self.list(status=status, limit=limit, cursor=cursor)
+            page = self.list(status=status, customer=customer, limit=limit, cursor=cursor)
             yield from page.get("data", [])
             cursor = page.get("next_cursor")
             if not cursor:
@@ -224,9 +252,85 @@ class BalanceResource:
     def __init__(self, client: OpenIntents) -> None:
         self._c = client
 
-    def get(self) -> Balance:
-        """The agent balance intents pay from, and this month's spend."""
-        return self._c._request("GET", "/balance")
+    def get(self, *, customer: str | None = None) -> Balance:
+        """The agent balance intents pay from, and this month's spend; a customer's with customer=."""
+        return self._c._request("GET", "/balance", params={"customer": customer})
+
+
+class Customers:
+    def __init__(self, client: OpenIntents) -> None:
+        self._c = client
+
+    def create(
+        self,
+        *,
+        external_id: str | None = None,
+        name: str | None = None,
+        email: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Customer:
+        """Someone you buy for, with their own balance and browser profile."""
+        body = _fields(external_id=external_id, name=name, email=email, metadata=metadata)
+        return self._c._request(
+            "POST", "/customers", json=body, idempotency_key=idempotency_key or str(uuid.uuid4())
+        )
+
+    def get(self, customer_id: str) -> Customer:
+        return self._c._request("GET", f"/customers/{customer_id}")
+
+    def update(
+        self,
+        customer_id: str,
+        *,
+        external_id: str | None = None,
+        name: str | None = None,
+        email: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> Customer:
+        """Fields left out stay; "" clears external_id, name or email; metadata replaces the whole map."""
+        body = _fields(external_id=external_id, name=name, email=email, metadata=metadata)
+        return self._c._request("PATCH", f"/customers/{customer_id}", json=body)
+
+    def list(
+        self, *, external_id: str | None = None, limit: int | None = None, cursor: str | None = None
+    ) -> CustomerList:
+        """Newest first."""
+        return self._c._request(
+            "GET", "/customers", params={"external_id": external_id, "limit": limit, "cursor": cursor}
+        )
+
+    def list_all(self, *, external_id: str | None = None, limit: int | None = None) -> Iterator[Customer]:
+        """Iterate every customer matching the filters, following next_cursor."""
+        cursor: str | None = None
+        while True:
+            page = self.list(external_id=external_id, limit=limit, cursor=cursor)
+            yield from page.get("data", [])
+            cursor = page.get("next_cursor")
+            if not cursor:
+                return
+
+
+class Topups:
+    def __init__(self, client: OpenIntents) -> None:
+        self._c = client
+
+    def create(
+        self,
+        amount: int,
+        *,
+        currency: str | None = None,
+        customer: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Topup:
+        """A payment link that adds amount (cents) to a balance once paid. Live keys only."""
+        body = _fields(amount=amount, currency=currency, customer=customer)
+        return self._c._request(
+            "POST", "/topups", json=body, idempotency_key=idempotency_key or str(uuid.uuid4())
+        )
+
+    def get(self, topup_id: str) -> Topup:
+        return self._c._request("GET", f"/topups/{topup_id}")
 
 
 class AsyncOpenIntents:
@@ -246,6 +350,8 @@ class AsyncOpenIntents:
         self._http = http_client or httpx.AsyncClient(timeout=timeout)
         self.intents = AsyncIntents(self)
         self.balance = AsyncBalanceResource(self)
+        self.customers = AsyncCustomers(self)
+        self.topups = AsyncTopups(self)
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -301,9 +407,10 @@ class AsyncIntents:
         context: Mapping[str, Any] | None = None,
         require_payment_link: bool | None = None,
         metadata: Mapping[str, str] | None = None,
+        customer: str | None = None,
         idempotency_key: str | None = None,
     ) -> Intent:
-        body = _create_body(intent, max_amount, currency, context, require_payment_link, metadata)
+        body = _create_body(intent, max_amount, currency, context, require_payment_link, metadata, customer)
         return await self._c._request(
             "POST", "/intents", json=body, idempotency_key=idempotency_key or str(uuid.uuid4())
         )
@@ -312,18 +419,25 @@ class AsyncIntents:
         return await self._c._request("GET", f"/intents/{intent_id}")
 
     async def list(
-        self, *, status: IntentStatus | None = None, limit: int | None = None, cursor: str | None = None
+        self,
+        *,
+        status: IntentStatus | None = None,
+        customer: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> IntentList:
         return await self._c._request(
-            "GET", "/intents", params={"status": status, "limit": limit, "cursor": cursor}
+            "GET",
+            "/intents",
+            params={"status": status, "customer": customer, "limit": limit, "cursor": cursor},
         )
 
     async def list_all(
-        self, *, status: IntentStatus | None = None, limit: int | None = None
+        self, *, status: IntentStatus | None = None, customer: str | None = None, limit: int | None = None
     ) -> AsyncIterator[Intent]:
         cursor: str | None = None
         while True:
-            page = await self.list(status=status, limit=limit, cursor=cursor)
+            page = await self.list(status=status, customer=customer, limit=limit, cursor=cursor)
             for intent in page.get("data", []):
                 yield intent
             cursor = page.get("next_cursor")
@@ -352,5 +466,79 @@ class AsyncBalanceResource:
     def __init__(self, client: AsyncOpenIntents) -> None:
         self._c = client
 
-    async def get(self) -> Balance:
-        return await self._c._request("GET", "/balance")
+    async def get(self, *, customer: str | None = None) -> Balance:
+        return await self._c._request("GET", "/balance", params={"customer": customer})
+
+
+class AsyncCustomers:
+    def __init__(self, client: AsyncOpenIntents) -> None:
+        self._c = client
+
+    async def create(
+        self,
+        *,
+        external_id: str | None = None,
+        name: str | None = None,
+        email: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Customer:
+        body = _fields(external_id=external_id, name=name, email=email, metadata=metadata)
+        return await self._c._request(
+            "POST", "/customers", json=body, idempotency_key=idempotency_key or str(uuid.uuid4())
+        )
+
+    async def get(self, customer_id: str) -> Customer:
+        return await self._c._request("GET", f"/customers/{customer_id}")
+
+    async def update(
+        self,
+        customer_id: str,
+        *,
+        external_id: str | None = None,
+        name: str | None = None,
+        email: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> Customer:
+        body = _fields(external_id=external_id, name=name, email=email, metadata=metadata)
+        return await self._c._request("PATCH", f"/customers/{customer_id}", json=body)
+
+    async def list(
+        self, *, external_id: str | None = None, limit: int | None = None, cursor: str | None = None
+    ) -> CustomerList:
+        return await self._c._request(
+            "GET", "/customers", params={"external_id": external_id, "limit": limit, "cursor": cursor}
+        )
+
+    async def list_all(
+        self, *, external_id: str | None = None, limit: int | None = None
+    ) -> AsyncIterator[Customer]:
+        cursor: str | None = None
+        while True:
+            page = await self.list(external_id=external_id, limit=limit, cursor=cursor)
+            for customer in page.get("data", []):
+                yield customer
+            cursor = page.get("next_cursor")
+            if not cursor:
+                return
+
+
+class AsyncTopups:
+    def __init__(self, client: AsyncOpenIntents) -> None:
+        self._c = client
+
+    async def create(
+        self,
+        amount: int,
+        *,
+        currency: str | None = None,
+        customer: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Topup:
+        body = _fields(amount=amount, currency=currency, customer=customer)
+        return await self._c._request(
+            "POST", "/topups", json=body, idempotency_key=idempotency_key or str(uuid.uuid4())
+        )
+
+    async def get(self, topup_id: str) -> Topup:
+        return await self._c._request("GET", f"/topups/{topup_id}")

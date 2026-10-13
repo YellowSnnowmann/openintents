@@ -6,7 +6,10 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
-use crate::types::{Balance, CreateIntent, Intent, IntentList, IntentStatus, ListIntents};
+use crate::types::{
+    Balance, CreateIntent, CreateTopup, Customer, CustomerList, CustomerParams, Intent, IntentList, IntentStatus,
+    ListCustomers, ListIntents, Topup,
+};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.openintents.io/v1";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -127,6 +130,55 @@ impl Client {
     /// The agent balance intents pay from, and this month's spend.
     pub async fn balance(&self) -> Result<Balance> {
         self.send(Method::GET, "/balance", None, |r| r).await
+    }
+
+    /// A customer's balance.
+    pub async fn balance_for(&self, customer: &str) -> Result<Balance> {
+        self.send(Method::GET, "/balance", None, |r| r.query(&[("customer", customer)]))
+            .await
+    }
+
+    /// Someone you buy for, with their own balance and browser profile.
+    /// Sends a fresh Idempotency-Key; use [`Client::create_customer_idempotent`] to set your own.
+    pub async fn create_customer(&self, params: CustomerParams) -> Result<Customer> {
+        self.create_customer_idempotent(params, &uuid::Uuid::new_v4().to_string())
+            .await
+    }
+
+    pub async fn create_customer_idempotent(&self, params: CustomerParams, idempotency_key: &str) -> Result<Customer> {
+        self.send(Method::POST, "/customers", Some(idempotency_key), |r| r.json(&params))
+            .await
+    }
+
+    pub async fn get_customer(&self, id: &str) -> Result<Customer> {
+        self.send(Method::GET, &format!("/customers/{id}"), None, |r| r).await
+    }
+
+    /// Fields left out stay as they are (see [`CustomerParams`]).
+    pub async fn update_customer(&self, id: &str, params: CustomerParams) -> Result<Customer> {
+        self.send(Method::PATCH, &format!("/customers/{id}"), None, |r| r.json(&params))
+            .await
+    }
+
+    /// Newest first.
+    pub async fn list_customers(&self, params: &ListCustomers) -> Result<CustomerList> {
+        self.send(Method::GET, "/customers", None, |r| r.query(params)).await
+    }
+
+    /// A payment link that adds `amount` to a balance once paid. Live keys only.
+    /// Sends a fresh Idempotency-Key; use [`Client::create_topup_idempotent`] to set your own.
+    pub async fn create_topup(&self, params: CreateTopup) -> Result<Topup> {
+        self.create_topup_idempotent(params, &uuid::Uuid::new_v4().to_string())
+            .await
+    }
+
+    pub async fn create_topup_idempotent(&self, params: CreateTopup, idempotency_key: &str) -> Result<Topup> {
+        self.send(Method::POST, "/topups", Some(idempotency_key), |r| r.json(&params))
+            .await
+    }
+
+    pub async fn get_topup(&self, id: &str) -> Result<Topup> {
+        self.send(Method::GET, &format!("/topups/{id}"), None, |r| r).await
     }
 
     /// Poll until the intent is final, or (by default) needs payment.

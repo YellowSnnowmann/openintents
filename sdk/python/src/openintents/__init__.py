@@ -15,11 +15,15 @@ from .errors import OpenIntentsError, WaitTimeoutError, WebhookVerificationError
 from .types import (
     FINAL_STATUSES,
     Balance,
+    Customer,
+    CustomerList,
     Intent,
     IntentList,
     IntentStatus,
     PaymentRequest,
     Receipt,
+    Topup,
+    TopupStatus,
     WebhookEvent,
 )
 from .webhooks import sign_webhook, verify_webhook
@@ -29,6 +33,8 @@ __all__ = [
     "FINAL_STATUSES",
     "AsyncOpenIntents",
     "Balance",
+    "Customer",
+    "CustomerList",
     "Intent",
     "IntentList",
     "IntentStatus",
@@ -36,6 +42,8 @@ __all__ = [
     "OpenIntentsError",
     "PaymentRequest",
     "Receipt",
+    "Topup",
+    "TopupStatus",
     "WaitTimeoutError",
     "WebhookEvent",
     "WebhookVerificationError",

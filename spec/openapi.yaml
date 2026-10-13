@@ -8,14 +8,30 @@ info:
     browser, gets it paid (from your agent balance, or with a payment link) and
     resolves to a structured receipt.
 
+    Each payer (your account, or one of its customers) has a browser profile
+    that keeps their merchant logins between intents. Profiles and sessions
+    let you see that profile, sign in to a merchant with it, and follow the
+    browser while it works.
+
     **Preview.** This spec describes the API as it is being built. Endpoints
-    and payloads may change before launch.
+    and payloads may change before launch. Operations marked **Preview, not
+    yet available** are designed but not served yet.
 
     Conventions:
     - Amounts are integers in the smallest currency unit (cents for USD).
     - Timestamps are ISO 8601 in UTC.
-    - `POST` requests accept an `Idempotency-Key` header.
+    - `POST` operations that list an `Idempotency-Key` parameter honour it.
     - Lists are cursor-paginated (`limit`, `cursor`, `next_cursor`).
+    - Request bodies are JSON objects. Unknown fields are refused
+      (`400 invalid_request`), and so is an unknown `customer`, with
+      `param: customer`.
+    - Test and live keys work on the same customers, intents, balances and
+      profiles; `test` on an intent or a session says which kind of key made
+      it. Only live keys move money.
+    - Event streams (preview) are Server-Sent Events: send
+      `Accept: text/event-stream`.
+    - Expect new fields, new enum values and new event types; ignore the ones
+      you don't know.
   license:
     name: GPL-3.0-or-later
     url: https://www.gnu.org/licenses/gpl-3.0.html
@@ -58,17 +74,13 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/IntentStatus"
-        - name: limit
+        - name: customer
           in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: cursor
-          in: query
+          description: Only intents bought for this customer.
           schema:
             type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
           description: A page of intents, newest first.
@@ -118,10 +130,51 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /intents/{id}/events:
+    get:
+      operationId: listIntentEvents
+      summary: Follow an intent's progress
+      description: |
+        **Preview, not yet available.** The intent's timeline, oldest first:
+        status changes, the agent's steps, and its checkout (see `Event`).
+        `limit` and `cursor` page the JSON list. With
+        `Accept: text/event-stream` the response is a live stream instead
+        (see `EventStream`), resumed with `Last-Event-ID`.
+      parameters:
+        - $ref: "#/components/parameters/IntentId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/LastEventId"
+      responses:
+        "200":
+          description: A page of events, or the live stream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventList"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/EventStream"
+        "204":
+          description: |
+            A stream of something that is over, with nothing left to send
+            (asked to resume after its last event, say): SSE clients stop
+            reconnecting.
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
   /balance:
     get:
       operationId: getBalance
       summary: Get the agent balance
+      parameters:
+        - name: customer
+          in: query
+          description: A customer's balance instead of your account's.
+          schema:
+            type: string
       responses:
         "200":
           description: The balance intents pay from.
@@ -129,6 +182,513 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Balance"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /customers:
+    post:
+      operationId: createCustomer
+      summary: Create a customer
+      description: |
+        Someone you buy for. A customer has their own balance and their own
+        browser profile; pass `customer` when creating an intent. An
+        `external_id` already in use answers `409 conflict`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        description: Send `{}` for a customer with no details yet.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerParams"
+      responses:
+        "201":
+          description: The customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    get:
+      operationId: listCustomers
+      summary: List customers
+      parameters:
+        - name: external_id
+          in: query
+          description: Only the customer with this `external_id`.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of customers, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerList"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /customers/{id}:
+    get:
+      operationId: getCustomer
+      summary: Retrieve a customer
+      parameters:
+        - $ref: "#/components/parameters/CustomerId"
+      responses:
+        "200":
+          description: The customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCustomer
+      summary: Update a customer
+      description: |
+        Fields left out stay as they are. An empty string clears
+        `external_id`, `name` or `email`. `metadata`, when given, replaces the
+        whole map: send every pair to keep, or `{}` to clear it.
+      parameters:
+        - $ref: "#/components/parameters/CustomerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerParams"
+      responses:
+        "200":
+          description: The updated customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /topups:
+    post:
+      operationId: createTopup
+      summary: Top up a balance
+      description: |
+        A payment link that adds `amount` to your account's balance, or a
+        customer's, once paid. Needs a live key: a test key answers
+        `400 invalid_request` (`live_key_required`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTopupParams"
+      responses:
+        "201":
+          description: The top-up, `open` until paid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Topup"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /topups/{id}:
+    get:
+      operationId: getTopup
+      summary: Retrieve a top-up
+      parameters:
+        - $ref: "#/components/parameters/TopupId"
+      responses:
+        "200":
+          description: The top-up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Topup"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /profiles:
+    get:
+      operationId: listProfiles
+      summary: List browser profiles
+      description: |
+        **Preview, not yet available.** Your account's profile and your
+        customers' that exist so far, newest first.
+      parameters:
+        - name: customer
+          in: query
+          description: Only this customer's profile.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of profiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileList"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createProfile
+      summary: Create a browser profile
+      description: |
+        **Preview, not yet available.** Makes the profile for your account,
+        or for `customer`, ahead of its first intent or session. An intent
+        makes the profile it needs by itself, so this is optional. Making one
+        that exists returns it unchanged, with `200`.
+      requestBody:
+        required: true
+        description: Send `{}` for your account's own profile.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProfileParams"
+      responses:
+        "201":
+          description: The profile, made now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "200":
+          description: The profile, which already existed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /profiles/{id}:
+    get:
+      operationId: getProfile
+      summary: Retrieve a browser profile
+      description: "**Preview, not yet available.**"
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: The profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteProfile
+      summary: Forget a browser profile
+      description: |
+        **Preview, not yet available.** Erases everything the profile kept:
+        logins, cookies, saved data. It shows `forgetting` until that is done,
+        also while an intent or a session still finishes with it, then
+        `forgotten`; the next one starts from an empty profile. Forgetting
+        twice is fine.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "202":
+          description: The profile, `forgetting`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions:
+    post:
+      operationId: createSession
+      summary: Open a browser session
+      description: |
+        **Preview, not yet available.** Opens a browser on a profile, without
+        an intent: to sign in to a merchant once, so later intents find the
+        payer signed in, or to look at what the profile holds. Drive it with
+        commands, follow it with events, and release it when done; the
+        profile keeps what the session changed.
+
+        A profile is used by one intent or session at a time. If one is using
+        it, or it is `forgetting`, this answers `409 conflict`
+        (`profile_busy`), and the error's `lease` says what uses it and when
+        its lease next runs out. A profile is free while its intent waits in
+        `requires_payment`: a session opened then can change the cart that
+        intent resumes with.
+
+        A session never enters payment details (see `SessionCommand`). Test
+        and live keys can both open one.
+
+        Preview limits, which may change: a session closes `max_minutes`
+        after it opens, or after 5 minutes without a command (screenshots and
+        event streams do not count), and an account can have 2 sessions open
+        at once (`session_limit`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        description: Send `{}` to open your account's own profile on a blank page.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionParams"
+      responses:
+        "201":
+          description: The session, `queued` or `opening`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "409":
+          description: "`profile_busy` (with the `lease`) or `session_limit`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    get:
+      operationId: listSessions
+      summary: List browser sessions
+      description: "**Preview, not yet available.** Newest first."
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/SessionStatus"
+        - name: profile
+          in: query
+          schema:
+            type: string
+        - name: customer
+          in: query
+          description: Only sessions on this customer's profile.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions/{id}:
+    get:
+      operationId: getSession
+      summary: Retrieve a browser session
+      description: "**Preview, not yet available.**"
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions/{id}/commands:
+    post:
+      operationId: runSessionCommand
+      summary: Run a command in a session
+      description: |
+        **Preview, not yet available.** Runs one command on the session's
+        current page and waits for it, up to 20 seconds. One that takes
+        longer answers `202` while still `pending`: fetch it again by its
+        `id`. Commands run one at a time, in the order sent; one sent while
+        another is `pending` waits its turn. A retry with the same
+        `Idempotency-Key` returns the same command instead of running it
+        again. The session must be `open` (`409 session_not_open`).
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionCommand"
+      responses:
+        "200":
+          description: The command, `done`, `refused` or `failed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCommandResult"
+        "202":
+          description: The command, still `pending`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCommandResult"
+        "409":
+          description: "`session_not_open`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions/{id}/commands/{command_id}:
+    get:
+      operationId: getSessionCommand
+      summary: Retrieve a session command
+      description: "**Preview, not yet available.**"
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+            examples: [cmd_51f0e2]
+      responses:
+        "200":
+          description: The command.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCommandResult"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions/{id}/screenshot:
+    get:
+      operationId: getSessionScreenshot
+      summary: See a session's page
+      description: |
+        **Preview, not yet available.** A screenshot of the session's page,
+        taken now, as a JPEG whatever `Accept` says. It shows the payer's
+        signed-in pages, so it is never cached. The session must be `open`
+        (`409 session_not_open`).
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: The page.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+        "409":
+          description: "`session_not_open`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions/{id}/release:
+    post:
+      operationId: releaseSession
+      summary: Release a session
+      description: |
+        **Preview, not yet available.** Closes the browser and keeps what the
+        session changed in the profile: `closing`, then `closed`
+        (`released`). A session still `queued` or `opening` closes the same
+        way; one already `closed` or `failed` is returned unchanged.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "4XX":
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /sessions/{id}/events:
+    get:
+      operationId: listSessionEvents
+      summary: Follow a session
+      description: |
+        **Preview, not yet available.** The session's timeline, oldest first:
+        status changes, pages and commands (see `Event`). `limit` and
+        `cursor` page the JSON list. With `Accept: text/event-stream` the
+        response is a live stream instead (see `EventStream`), resumed with
+        `Last-Event-ID`.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/LastEventId"
+      responses:
+        "200":
+          description: A page of events, or the live stream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventList"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/EventStream"
+        "204":
+          description: |
+            A stream of something that is over, with nothing left to send
+            (asked to resume after its last event, say): SSE clients stop
+            reconnecting.
         "4XX":
           $ref: "#/components/responses/Error"
         default:
@@ -159,6 +719,31 @@ webhooks:
       responses:
         "200":
           description: Received.
+  sessionEvent:
+    post:
+      operationId: sessionEvent
+      summary: A browser session opened, closed or failed
+      description: |
+        **Preview, not yet available.** Sent when a session opens, closes, or
+        fails (its browser was lost, say), with the same signature as
+        `intentEvent`. Only endpoints subscribed to `session.*` types receive
+        it: an endpoint that takes every type keeps getting intent events
+        only. Dispatch on `type` before reading `data`.
+      parameters:
+        - name: OpenIntents-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionWebhookEvent"
+      responses:
+        "200":
+          description: Received.
 
 components:
   securitySchemes:
@@ -175,13 +760,71 @@ components:
       schema:
         type: string
         example: int_7f3a2c
+    CustomerId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: cus_4b81d0
+    ProfileId:
+      name: id
+      in: path
+      required: true
+      description: |
+        Starts with `prf_`; treat it as opaque. Find a customer's profile with
+        `GET /profiles?customer=`.
+      schema:
+        type: string
+        example: prf_7c1d04e2a9b3
+    TopupId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: pay_3e9b71
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: ses_92c4aa
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: With a stream, resume after this event; SSE clients send it when they reconnect.
+      schema:
+        type: string
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: false
-      description: Retrying with the same key returns the original result.
+      description: |
+        Retrying with the same key and the same request returns the first
+        successful result again, with an `Idempotent-Replayed: true` header. A
+        request that failed frees its key, so a retry runs again. The same key
+        with a different request answers `409 idempotency_key_reused`; while
+        the first request still runs, `409 idempotency_key_in_use`.
       schema:
         type: string
+        minLength: 1
+        maxLength: 255
 
   responses:
     Error:
@@ -198,33 +841,41 @@ components:
 
     CreateIntentParams:
       type: object
+      additionalProperties: false
       required: [intent]
       properties:
         intent:
           type: string
+          maxLength: 2000
           description: What to buy or book, in natural language.
         max_amount:
           type: integer
+          minimum: 1
+          maximum: 1000000
           description: Spending cap in cents. The intent fails rather than exceed it.
         currency:
           type: string
-          description: ISO currency code, lowercase.
+          minLength: 3
+          maxLength: 3
+          description: ISO currency code, kept lowercase.
         context:
           type: object
           additionalProperties: true
-          description: Structured details (addresses, names, loyalty numbers).
+          description: Structured details (addresses, names, loyalty numbers), at most 16 KB as JSON.
         require_payment_link:
           type: boolean
           description: Always return a payment link instead of paying from the balance.
+        customer:
+          type: string
+          description: |
+            A customer of your account to buy for. The intent uses their
+            balance and their browser profile. Without it, your account's own.
         metadata:
-          type: object
-          additionalProperties:
-            type: string
-          description: Up to 20 of your own key/value pairs.
+          $ref: "#/components/schemas/MetadataParam"
 
     Intent:
       type: object
-      required: [id, object, status, intent, test, created_at]
+      required: [id, object, status, intent, customer, currency, metadata, test, created_at]
       properties:
         id:
           type: string
@@ -235,15 +886,18 @@ components:
           $ref: "#/components/schemas/IntentStatus"
         intent:
           type: string
+        customer:
+          type: [string, "null"]
+          description: The customer it buys for; `null` for your account's own intents.
         max_amount:
           type: [integer, "null"]
         currency:
-          type: [string, "null"]
+          type: string
         context:
           type: [object, "null"]
           additionalProperties: true
         metadata:
-          type: [object, "null"]
+          type: object
           additionalProperties:
             type: string
         payment:
@@ -278,7 +932,7 @@ components:
           type: string
           format: uri
         merchant:
-          type: string
+          type: [string, "null"]
         total:
           type: integer
         fee:
@@ -345,15 +999,22 @@ components:
 
     Balance:
       type: object
-      required: [object, available, currency]
+      required: [object, available, held, currency, customer, monthly_limit, spent_this_month]
       properties:
         object:
           type: string
           const: balance
         available:
           type: integer
+          description: What intents can pay from now.
+        held:
+          type: integer
+          description: Reserved for intents at their payment step.
         currency:
           type: string
+        customer:
+          type: [string, "null"]
+          description: The customer whose balance this is; `null` for your account's.
         monthly_limit:
           type: [integer, "null"]
         spent_this_month:
@@ -372,10 +1033,21 @@ components:
               enum: [invalid_request, authentication, payment, not_found, conflict, rate_limit, api_error]
             code:
               type: string
+              examples:
+                - live_key_required
+                - idempotency_key_reused
+                - idempotency_key_in_use
+                - profile_busy
+                - session_limit
+                - session_not_open
+                - url_not_allowed
             message:
               type: string
             param:
               type: string
+            lease:
+              description: Preview. With `profile_busy`, what uses the profile and when its lease next runs out.
+              $ref: "#/components/schemas/ProfileLease"
 
     WebhookEvent:
       type: object
@@ -400,3 +1072,534 @@ components:
           format: date-time
         data:
           $ref: "#/components/schemas/Intent"
+
+    MetadataParam:
+      type: object
+      description: Up to 20 of your own key/value pairs; keys 1 to 40 bytes, values up to 500.
+      maxProperties: 20
+      propertyNames:
+        minLength: 1
+        maxLength: 40
+      additionalProperties:
+        type: string
+        maxLength: 500
+
+    Customer:
+      type: object
+      required: [id, object, external_id, name, email, metadata, created_at]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: customer
+        external_id:
+          type: [string, "null"]
+          description: Your own ID for them, unique in your account.
+        name:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CustomerParams:
+      type: object
+      additionalProperties: false
+      properties:
+        external_id:
+          type: string
+          maxLength: 200
+          description: Your own ID for them, unique in your account; one already in use answers `409 conflict`.
+        name:
+          type: string
+          maxLength: 200
+        email:
+          type: string
+          maxLength: 320
+        metadata:
+          $ref: "#/components/schemas/MetadataParam"
+
+    CustomerList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        next_cursor:
+          type: [string, "null"]
+
+    CreateTopupParams:
+      type: object
+      additionalProperties: false
+      required: [amount]
+      properties:
+        amount:
+          type: integer
+          minimum: 50
+          maximum: 1000000
+          description: In cents.
+        currency:
+          type: string
+          enum: [usd]
+          default: usd
+          description: Only `usd` for now.
+        customer:
+          type: string
+          description: Top up this customer's balance instead of your account's.
+
+    Topup:
+      type: object
+      required: [id, object, amount, currency, customer, status, url, expires_at, created_at]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: topup
+        amount:
+          type: integer
+        currency:
+          type: string
+        customer:
+          type: [string, "null"]
+        status:
+          type: string
+          description: |
+            `open` until paid or until `expires_at` (24 hours after it was
+            made). A payment begun in time can still turn an `expired` top-up
+            `paid`.
+          enum: [open, paid, expired]
+        url:
+          type: string
+          format: uri
+          description: Where the payer pays.
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    Event:
+      type: object
+      description: |
+        Preview. One step in an intent's or a session's timeline. `type` says
+        what `data` holds; new types may appear, so skip the ones you don't
+        know.
+        - `status`: `{status, reason?}`, the intent's or session's new status.
+          `reason` says why, when there is a why: a failed intent's error
+          code, the reason of the payment an intent requires, `paid` when a
+          paid intent is queued again, and `payment_expired` when its unpaid
+          link expired. A run that moved to a fresh browser shows
+          `{status: queued, reason: browser_lost}`; one sent again to get past
+          a shop's check, `{status: queued, reason: retrying}`.
+        - `step` (intents): `{action}`, what the agent did: `open`, `look`,
+          `click`, `type`, `read`.
+        - `checkout` (intents): `{merchant, total, currency}`, the payment
+          step was reached.
+        - `page` (sessions): `{url, title}`, the session's page changed.
+        - `command` (sessions): `{id, type, status, typed_chars?}`, a command
+          ran; `typed_chars` counts what a `type` action typed.
+      required: [id, object, type, created_at, data]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: event
+        type:
+          type: string
+          examples: [status, step, checkout, page, command]
+        created_at:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+
+    EventList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Event"
+        next_cursor:
+          type: [string, "null"]
+
+    EventStream:
+      type: string
+      description: |
+        Preview. Server-Sent Events: each event is `id: <event id>` and
+        `data: <Event as JSON>`, then a blank line. Past events come first,
+        then new ones as they happen, with a comment line (`:`) now and then
+        to keep the connection open. Reconnect with `Last-Event-ID` to resume
+        without repeats; a stream may also close on its own after a while,
+        and resuming picks it up. Once the intent or session is over and its
+        last event is sent, the stream closes. Asking for a stream of
+        something that is over with nothing left to send (resuming after its
+        last event, say) answers `204 No Content`. Too many open streams
+        answer `429` with `code: too_many_streams`; try again shortly.
+
+    ProfileStatus:
+      type: string
+      description: |
+        `ready`: nothing uses it. `in_use`: an intent or a session holds it
+        (see `lease`). `forgetting`: being erased, which shows even while an
+        intent or a session still finishes with it. `forgotten`: erased, and
+        nothing saved in it since.
+      enum: [ready, in_use, forgetting, forgotten]
+
+    ProfileLease:
+      type: object
+      description: What uses the profile now. A profile is used by one intent or session at a time.
+      required: [holder, expires_at]
+      properties:
+        holder:
+          type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              examples: [intent, session]
+            id:
+              type: string
+        expires_at:
+          type: string
+          format: date-time
+          description: When the lease next runs out. It is renewed while the holder works; one that stops lets it lapse.
+
+    Profile:
+      type: object
+      description: |
+        Preview. A payer's browser profile: the merchant logins, cookies and
+        carts their intents and sessions build up. Your account has one, and
+        so does each customer. It is reachable only with your account's keys.
+      required: [id, object, customer, status, lease, size_bytes, created_at, last_used_at]
+      properties:
+        id:
+          type: string
+          examples: [prf_7c1d04e2a9b3]
+        object:
+          type: string
+          const: profile
+        customer:
+          type: [string, "null"]
+          description: Its customer; `null` for your account's own profile.
+        status:
+          $ref: "#/components/schemas/ProfileStatus"
+        lease:
+          oneOf:
+            - $ref: "#/components/schemas/ProfileLease"
+            - type: "null"
+        size_bytes:
+          type: [integer, "null"]
+          description: The saved profile's size; `null` before anything is saved.
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+          description: When an intent or a session last took it.
+
+    CreateProfileParams:
+      type: object
+      additionalProperties: false
+      properties:
+        customer:
+          type: string
+          description: Their profile; without it, your account's.
+
+    ProfileList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Profile"
+        next_cursor:
+          type: [string, "null"]
+
+    SessionStatus:
+      type: string
+      enum: [queued, opening, open, closing, closed, failed]
+
+    CreateSessionParams:
+      type: object
+      additionalProperties: false
+      description: |
+        The profile to open, by `profile` or by `customer` but not both;
+        neither opens your account's own.
+      not:
+        required: [profile, customer]
+      properties:
+        profile:
+          type: string
+        customer:
+          type: string
+        start_url:
+          type: string
+          format: uri
+          description: |
+            A public `https` URL on the default port; other hosts and ports
+            answer `400 url_not_allowed`. Without it, a blank page.
+        max_minutes:
+          type: integer
+          minimum: 1
+          maximum: 15
+          default: 15
+          description: Counted from when the session opens. Preview limit, which may change.
+
+    Session:
+      type: object
+      description: Preview. A browser opened on a profile without an intent.
+      required: [id, object, profile, customer, status, test, created_at, expires_at]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: session
+        profile:
+          type: string
+        customer:
+          type: [string, "null"]
+        status:
+          $ref: "#/components/schemas/SessionStatus"
+        test:
+          type: boolean
+          description: Opened with a test key.
+        start_url:
+          type: [string, "null"]
+          format: uri
+        url:
+          type: [string, "null"]
+          format: uri
+          description: The page it is on now.
+        title:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        opened_at:
+          type: [string, "null"]
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: When it closes by itself, at the latest.
+        closed_at:
+          type: [string, "null"]
+          format: date-time
+        close_reason:
+          type: [string, "null"]
+          description: |
+            Why it ended: `released` by you, `idle` (no command for 5
+            minutes), `timed_out` (`max_minutes`), `browser_lost` (the browser
+            stopped: the session `failed`, and the profile keeps what was last
+            saved), or `error`. Others may appear.
+          examples: [released, idle, timed_out, browser_lost, error]
+
+    SessionList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Session"
+        next_cursor:
+          type: [string, "null"]
+
+    SessionCommand:
+      description: |
+        One thing to do on the session's page. A session never enters payment
+        details: an `act` on a control recognized as placing an order or
+        paying, Enter on a payment form, or typing into a card field is
+        `refused` (`payment_not_allowed`). The text of a `type` action is kept
+        only until the command runs; results and events never return it
+        (events show `typed_chars`), though the page itself may show it.
+      oneOf:
+        - $ref: "#/components/schemas/NavigateCommand"
+        - $ref: "#/components/schemas/SnapshotCommand"
+        - $ref: "#/components/schemas/ActCommand"
+        - $ref: "#/components/schemas/ReadCommand"
+      discriminator:
+        propertyName: type
+        mapping:
+          navigate: "#/components/schemas/NavigateCommand"
+          snapshot: "#/components/schemas/SnapshotCommand"
+          act: "#/components/schemas/ActCommand"
+          read: "#/components/schemas/ReadCommand"
+
+    NavigateCommand:
+      type: object
+      additionalProperties: false
+      required: [type, url]
+      properties:
+        type:
+          type: string
+          const: navigate
+        url:
+          type: string
+          format: uri
+          description: |
+            A public `https` URL on the default port; other hosts and ports
+            are `refused` (`url_not_allowed`).
+
+    SnapshotCommand:
+      type: object
+      additionalProperties: false
+      description: The page's accessibility tree, with a `ref` on each element you can act on.
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: snapshot
+
+    ActCommand:
+      type: object
+      additionalProperties: false
+      description: Act on an element by its `ref` from the latest snapshot.
+      required: [type, ref, action]
+      properties:
+        type:
+          type: string
+          const: act
+        ref:
+          type: string
+          examples: [e12]
+        action:
+          type: string
+          enum: [click, type, select, press]
+        text:
+          type: string
+          description: For `type`, the text to type.
+        value:
+          type: string
+          description: For `select`, the option.
+        key:
+          type: string
+          description: For `press`, such as `Enter` or `Tab`.
+      allOf:
+        - if:
+            properties:
+              action:
+                const: type
+          then:
+            required: [text]
+        - if:
+            properties:
+              action:
+                const: select
+          then:
+            required: [value]
+        - if:
+            properties:
+              action:
+                const: press
+          then:
+            required: [key]
+
+    ReadCommand:
+      type: object
+      additionalProperties: false
+      description: The page's readable text.
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: read
+        selector:
+          type: string
+          description: A CSS selector, to read one element; without it, the whole page.
+
+    Failure:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: [payment_not_allowed, url_not_allowed, not_found]
+        message:
+          type: string
+
+    SessionCommandResult:
+      type: object
+      required: [id, object, type, status, created_at]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: session_command
+        type:
+          type: string
+          examples: [navigate, snapshot, act, read]
+        status:
+          type: string
+          enum: [pending, done, refused, failed]
+        url:
+          type: [string, "null"]
+          format: uri
+          description: The page after the command.
+        title:
+          type: [string, "null"]
+        snapshot:
+          type: [string, "null"]
+          description: For `snapshot`, the tree.
+        text:
+          type: [string, "null"]
+          description: For `read`, the text.
+        error:
+          description: Why it was `refused` or `failed`.
+          oneOf:
+            - $ref: "#/components/schemas/Failure"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+
+    SessionWebhookEvent:
+      type: object
+      required: [id, type, created_at, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - session.opened
+            - session.closed
+            - session.failed
+        created_at:
+          type: string
+          format: date-time
+        data:
+          $ref: "#/components/schemas/Session"

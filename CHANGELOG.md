@@ -4,6 +4,25 @@ All three SDKs share one version. Format: [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Added
+
+- Spec, marked preview (designed, not yet served): browser profiles
+  (`/profiles`), browser sessions (`/sessions`, with commands, screenshots and
+  release, and a `sessionEvent` webhook), event streams for intents and
+  sessions, and `lease` on the error body for `profile_busy`.
+- Spec: what the API already serves but the spec left out: customers
+  (`/customers`, with the `external_id` filter), top-ups (`/topups`),
+  `customer` on intents (and the `customer` filter on `GET /intents`), `held`
+  and `customer` on the balance (and `?customer=`), and the server's limits
+  and idempotency rules.
+- Spec conventions: test and live keys share customers, intents, balances
+  and profiles; unknown request fields are refused; new enum values may
+  appear.
+- SDKs (TypeScript, Python, Rust): customers (create, retrieve, update,
+  list), top-ups (create, retrieve), a customer's balance, `customer` when
+  creating and listing intents, and the balance's `held` and `customer`.
+  Customer and top-up creates send an `Idempotency-Key`, like intents.
+
 ## [0.1.0]
 
 ### Added
