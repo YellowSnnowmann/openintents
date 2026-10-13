@@ -444,6 +444,11 @@ paths:
         A session never enters payment details (see `SessionCommand`). Test
         and live keys can both open one.
 
+        Sessions may not be open to every key yet. Until they are open to
+        yours, this answers `503` with `code: sessions_unavailable` and
+        creates nothing; a retry with the same `Idempotency-Key` opens the
+        session once they are. Sessions already open keep working.
+
         Limits, which may change: a session closes `max_minutes` after it
         opens, after 5 minutes with no command sent or run (`idle`;
         screenshots and event streams do not count), or once its pages use
@@ -468,6 +473,12 @@ paths:
                 $ref: "#/components/schemas/Session"
         "409":
           description: "`profile_busy` (with the `lease`) or `session_limit`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "503":
+          description: "`sessions_unavailable`: sessions are not open to this key yet. Nothing was created."
           content:
             application/json:
               schema:
@@ -1047,6 +1058,7 @@ components:
                 - profile_busy
                 - session_limit
                 - session_not_open
+                - sessions_unavailable
                 - url_not_allowed
                 - too_many_commands
                 - too_many_streams

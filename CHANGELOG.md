@@ -12,8 +12,9 @@ All three SDKs share one version. Format: [Keep a Changelog](https://keepachange
   `profile_busy`. It also says how sessions behave: why they close
   (`data_limit` among the reasons), when the refs of a snapshot are
   forgotten, which text and keys a command may send, what a session refuses
-  (`payment_not_allowed`), every failure code, and that at most 2
-  screenshots of a session wait at once (`429 too_many_commands`).
+  (`payment_not_allowed`), every failure code, that at most 2 screenshots
+  of a session wait at once (`429 too_many_commands`), and that opening one
+  answers `503 sessions_unavailable` while sessions are not open to the key.
 - Spec: what the API already serves but the spec left out: customers
   (`/customers`, with the `external_id` filter), top-ups (`/topups`),
   `customer` on intents (and the `customer` filter on `GET /intents`), `held`
