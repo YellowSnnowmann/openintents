@@ -448,7 +448,8 @@ paths:
         opens, after 5 minutes with no command sent or run (`idle`;
         screenshots and event streams do not count), or once its pages use
         more data than a session may (`data_limit`). An account can have 2
-        sessions open at once (`session_limit`).
+        sessions that have not ended (`queued`, `opening`, `open` or
+        `closing`) at once (`session_limit`).
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -1448,7 +1449,7 @@ components:
         One thing to do on the session's page. A session never enters payment
         details or places an order. These are `refused`, with
         `payment_not_allowed`:
-        - an `act` on a control recognised as placing an order or paying
+        - an `act` on a control recognized as placing an order or paying
           (also subscribing, donating, booking and the like), and on a
           checkout page also on a bare "Continue", "Confirm", "Submit",
           "Next" or similar;
